@@ -13,14 +13,16 @@ if platform.system() == "Windows":
     import ctypes
     from ctypes import wintypes
     user32 = ctypes.windll.user32
+    WS_EX_NOACTIVATE = 0x08000000
+    WS_EX_TOPMOST = 0x00000008
 
 # Import for macOS window level (requires pyobjc)
 if platform.system() == "Darwin":
     try:
-        from AppKit import NSWindow, NSFloatingWindowLevel
+        from AppKit import NSWindow, NSFloatingWindowLevel, NSNonactivatingPanelMask
         import objc
     except ImportError:
-        print("Warning: pyobjc not installed. Always-on-top may not work on macOS.")
+        print("Warning: pyobjc not installed. Always-on-top and non-activating may not work on macOS.")
         objc = None
 
 try:
@@ -59,13 +61,15 @@ def setup():
     window_x = (screen_width - window_width) // 2
     window_y = (screen_height - window_height) // 2
     
-    # Use RESIZABLE flag only to allow window frame and resizing
-    screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
+    # Use NOFRAME to avoid focus-taking borders; rely on RESIZABLE for basic window management
+    screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE | pygame.NOFRAME)
     pygame.display.set_caption("Virtual Touchscreen Keyboard")
     
     hwnd = pygame.display.get_wm_info()['window']
     if platform.system() == "Windows":
+        # Set window to be always on top and non-activating
         user32.SetWindowPos(hwnd, -1, window_x, window_y, window_width, window_height, 0x0001 | 0x0002)
+        user32.SetWindowLongW(hwnd, -20, user32.GetWindowLongW(hwnd, -20) | WS_EX_NOACTIVATE | WS_EX_TOPMOST)
     elif platform.system() == "Linux":
         try:
             import Xlib.display
@@ -73,18 +77,21 @@ def setup():
             window = display.create_resource_object('window', hwnd)
             atom = display.intern_atom('_NET_WM_STATE_ABOVE')
             window.change_property(display.intern_atom('_NET_WM_STATE'), Xlib.Xatom.ATOM, 32, [atom])
+            # Set input hint to prevent focus
+            window.set_wm_hints(flags=Xlib.Xutil.InputHint, input=False)
             window.configure(x=window_x, y=window_y, width=window_width, height=window_height)
             display.sync()
         except Exception as e:
-            print(f"Linux: Failed to set window position or always on top: {e}")
+            print(f"Linux: Failed to set window position or non-activating: {e}")
     elif platform.system() == "Darwin" and objc:
         try:
             ns_window = objc.objc_object(ptr=hwnd)
             ns_window.setLevel_(NSFloatingWindowLevel)
+            ns_window.setStyleMask_(NSNonactivatingPanelMask)
             ns_window.setFrameOrigin_((window_x, screen_height - window_y - window_height))
             ns_window.setContentSize_((window_width, window_height))
         except Exception as e:
-            print(f"macOS: Failed to set window position or always on top: {e}")
+            print(f"macOS: Failed to set window position or non-activating: {e}")
     
     font = pygame.font.SysFont("arial", 14)
     small_font = pygame.font.SysFont("arial", 10)
@@ -130,6 +137,16 @@ def set_feedback_message(message, duration=2.0):
     feedback_message = message
     feedback_timer = time.time() + duration
     print(f"Feedback set: {message}")
+
+def restore_target_focus():
+    """Ensure the target application is focused before typing or showing keyboard."""
+    if pyautogui:
+        try:
+            print("Restoring focus to target application")
+            pyautogui.click()  # Simulate a click to focus the active window
+            time.sleep(0.1)  # Brief pause to ensure focus
+        except Exception as e:
+            print(f"Failed to restore focus: {e}")
 
 def copy_to_clipboard(text):
     try:
@@ -221,16 +238,7 @@ def send_key(text):
     
     print(f"send_key called with text: '{text}' on {platform.system()}")
     
-    if platform.system() == "Windows" and pyautogui:
-        try:
-            current_window = user32.GetForegroundWindow()
-            print(f"Stored current window: {current_window}")
-        except Exception as e:
-            print(f"Failed to get current window: {e}")
-            current_window = None
-    else:
-        current_window = None
-    
+    # Handle CapsLock toggle
     if text == "CapsLock":
         caps_lock_active = not caps_lock_active
         set_feedback_message("Caps Lock " + ("On" if caps_lock_active else "Off"))
@@ -238,50 +246,46 @@ def send_key(text):
         active_modifiers = {key: False for key in active_modifiers}
         return
     
+    # Handle modifiers
     if text in ["Shift", "Ctrl", "Alt", "Tab", "Windows"]:
         active_modifiers[text] = True
         set_feedback_message(f"{text} pressed")
         print(f"Modifier {text} set to True")
         return
     
-    if platform.system() == "Emscripten":
-        try:
+    try:
+        if platform.system() == "Emscripten":
+            # Browser environment: Simulate key events via JavaScript
             key_map = {
                 "Enter": {"key": "Enter", "code": "Enter", "keyCode": 13},
                 "Backspace": {"key": "Backspace", "code": "Backspace", "keyCode": 8},
                 "Space": {"key": " ", "code": "Space", "keyCode": 32},
                 "Tab": {"key": "Tab", "code": "Tab", "keyCode": 9},
-                "Shift": {"key": "Shift", "code": "ShiftLeft", "keyCode": 16},
-                "Ctrl": {"key": "Control", "code": "ControlLeft", "keyCode": 17},
-                "Alt": {"key": "Alt", "code": "AltLeft", "keyCode": 18},
                 "Esc": {"key": "Escape", "code": "Escape", "keyCode": 27},
                 "Delete": {"key": "Delete", "code": "Delete", "keyCode": 46},
-                "CapsLock": {"key": "CapsLock", "code": "CapsLock", "keyCode": 20},
-                "Windows": {"key": "Meta", "code": "MetaLeft", "keyCode": 91},
                 "Up": {"key": "ArrowUp", "code": "ArrowUp", "keyCode": 38},
                 "Down": {"key": "ArrowDown", "code": "ArrowDown", "keyCode": 40},
                 "Left": {"key": "ArrowLeft", "code": "ArrowLeft", "keyCode": 37},
                 "Right": {"key": "ArrowRight", "code": "ArrowRight", "keyCode": 39}
             }
             
-            if text in key_map:
-                props = key_map[text]
-            else:
-                text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
-                props = {
-                    "key": text_to_send,
-                    "code": f"Key{text_to_send.upper()}" if len(text_to_send) == 1 else "",
-                    "keyCode": ord(text_to_send.upper()) if len(text_to_send) == 1 else 0
-                }
-            
+            text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
+            props = key_map.get(text, {
+                "key": text_to_send,
+                "code": f"Key{text_to_send.upper()}" if len(text_to_send) == 1 else "",
+                "keyCode": ord(text_to_send.upper()) if len(text_to_send) == 1 else 0
+            })
             props["shiftKey"] = active_modifiers["Shift"]
             props["ctrlKey"] = active_modifiers["Ctrl"]
             props["altKey"] = active_modifiers["Alt"]
             
+            # Ensure browser focus is on the target input field
+            restore_target_focus()
+            
             js_code = f'''
             let el = document.activeElement;
             if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && !el.isContentEditable)) {{
-                el = document.querySelector("input, textarea, [contenteditable]") || document.activeElement;
+                el = document.querySelector("input, textarea, [contenteditable]") || document.body;
                 if (el) el.focus();
             }}
             if (el) {{
@@ -298,51 +302,46 @@ def send_key(text):
                 ["keydown", "keypress", "keyup"].forEach(eventType => {{
                     el.dispatchEvent(new KeyboardEvent(eventType, eventProps));
                 }});
-                if (!"{text}".match(/^(Shift|Ctrl|Alt|Tab|Windows|CapsLock)$/)) {{
-                    let value = "{text}" === "Space" ? " " :
-                                "{text}" === "Enter" ? "\\n" :
-                                "{text}" === "Tab" ? "\\t" :
-                                "{text}" === "Backspace" ? "" :
-                                "{text}" === "Delete" ? "" :
-                                "{props['key']}";
-                    if ("{text}" === "Backspace") {{
-                        let start = el.selectionStart;
-                        if (start > 0) {{
-                            el.value = el.value.substring(0, start - 1) + el.value.substring(start);
-                            el.selectionStart = el.selectionEnd = start - 1;
-                        }}
-                    }} else if ("{text}" === "Delete") {{
-                        el.value = "";
-                    }} else if (value) {{
-                        let start = el.selectionStart;
-                        el.value = el.value.substring(0, start) + value + el.value.substring(el.selectionEnd);
-                        el.selectionStart = el.selectionEnd = start + value.length;
+                if ("{text}" === "Backspace") {{
+                    let start = el.selectionStart;
+                    if (start > 0) {{
+                        el.value = el.value.substring(0, start - 1) + el.value.substring(start);
+                        el.selectionStart = el.selectionEnd = start - 1;
                     }}
+                }} else if ("{text}" === "Delete") {{
+                    let start = el.selectionStart;
+                    el.value = el.value.substring(0, start) + el.value.substring(start + 1);
+                    el.selectionStart = el.selectionEnd = start;
+                }} else if ("{text}" === "Space") {{
+                    let start = el.selectionStart;
+                    el.value = el.value.substring(0, start) + " " + el.value.substring(start);
+                    el.selectionStart = el.selectionEnd = start + 1;
+                }} else if ("{text}" === "Enter") {{
+                    let start = el.selectionStart;
+                    el.value = el.value.substring(0, start) + "\\n" + el.value.substring(start);
+                    el.selectionStart = el.selectionEnd = start + 1;
+                }} else if ("{text}" !== "Shift" && "{text}" !== "Ctrl" && "{text}" !== "Alt" && "{text}" !== "Tab" && "{text}" !== "Windows") {{
+                    let start = el.selectionStart;
+                    el.value = el.value.substring(0, start) + "{props['key']}" + el.value.substring(start);
+                    el.selectionStart = el.selectionEnd = start + "{props['key']}".length;
                 }}
             }} else {{
                 console.error("No focusable element found");
             }}
             '''
             js.eval(js_code)
-            set_feedback_message(f"Typed: {text}")
-            last_typed_text = text
-            print(f"Emscripten: Typed '{text}' to browser")
-        except Exception as e:
-            set_feedback_message(f"Typing error: {str(e)}")
-            print(f"Key send error (Emscripten): {e}\n{traceback.format_exc()}")
-    else:
-        try:
-            print(f"Attempting to type '{text}' on {platform.system()}")
-            if pyautogui is not None:
-                print("Ensuring target window focus")
-                if platform.system() == "Windows" and current_window:
-                    user32.SetForegroundWindow(current_window)
-                    time.sleep(0.05)
-                else:
-                    pyautogui.click()
-                    time.sleep(0.1)
-            else:
-                print("Warning: pyautogui not available for focus")
+            set_feedback_message(f"Typed: {text_to_send}")
+            last_typed_text = text_to_send
+            print(f"Emscripten: Typed '{text_to_send}' to browser")
+        else:
+            # Desktop environment: Use pyautogui or keyboard
+            if pyautogui is None and keyboard is None:
+                set_feedback_message("Typing failed: Install pyautogui or keyboard")
+                print("No typing method available")
+                return
+            
+            # Ensure target is focused
+            restore_target_focus()
             
             key_map = {
                 "Backspace": "backspace",
@@ -355,61 +354,47 @@ def send_key(text):
                 "Down": "down",
                 "Left": "left",
                 "Right": "right",
-                "Windows": "win",
-                "CapsLock": "capslock"
+                "Windows": "win"
             }
             
-            if pyautogui is not None:
-                print("Using pyautogui for typing")
-                if text in key_map and key_map[text]:
+            text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
+            if pyautogui:
+                print(f"Using pyautogui to type '{text_to_send}'")
+                if text in key_map:
                     pyautogui.press(key_map[text])
-                    print(f"Pressed '{key_map[text]}'")
-                elif text in ["Shift", "Ctrl", "Alt", "Tab", "Windows"]:
-                    print(f"Skipping modifier '{text}'")
-                    return
+                    print(f"Pressed special key: {key_map[text]}")
+                elif active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
+                    pyautogui.hotkey("ctrl", text.lower())
+                    print(f"Hotkey: ctrl+{text.lower()}")
                 else:
-                    text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
-                    if active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
-                        pyautogui.hotkey("ctrl", text.lower())
-                        print(f"Hotkey 'ctrl+{text.lower()}'")
-                    else:
-                        pyautogui.write(text_to_send, interval=0.05)
-                        print(f"Typed '{text_to_send}'")
-                set_feedback_message(f"Typed: {text}")
-                last_typed_text = text
-            elif keyboard is not None:
-                print("Falling back to keyboard library")
-                if text in key_map and key_map[text]:
+                    pyautogui.write(text_to_send, interval=0.05)
+                    print(f"Typed: {text_to_send}")
+            elif keyboard:
+                print(f"Using keyboard library to type '{text_to_send}'")
+                if text in key_map:
                     keyboard.press_and_release(key_map[text])
-                    print(f"Pressed '{key_map[text]}'")
-                elif text in ["Shift", "Ctrl", "Alt", "Tab", "Windows"]:
-                    print(f"Skipping modifier '{text}'")
-                    return
+                    print(f"Pressed special key: {key_map[text]}")
+                elif active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
+                    keyboard.press_and_release(f"ctrl+{text.lower()}")
+                    print(f"Hotkey: ctrl+{text.lower()}")
                 else:
-                    text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
-                    if active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
-                        keyboard.press_and_release(f"ctrl+{text.lower()}")
-                        print(f"Hotkey 'ctrl+{text.lower()}'")
-                    else:
-                        keyboard.write(text_to_send)
-                        print(f"Typed '{text_to_send}'")
-                set_feedback_message(f"Typed: {text}")
-                last_typed_text = text
-            else:
-                print("No typing method available")
-                set_feedback_message("Typing failed: Install pyautogui or keyboard")
-                return
+                    keyboard.write(text_to_send)
+                    print(f"Typed: {text_to_send}")
             
-            input_buffer += text
-            print(f"Success: Typed '{text}' on {platform.system()}")
-        except Exception as e:
-            error_msg = f"Typing error: {str(e)}"
-            set_feedback_message(error_msg)
-            print(f"Key send error ({platform.system()}): {error_msg}\n{traceback.format_exc()}")
-            input_buffer += text
+            set_feedback_message(f"Typed: {text_to_send}")
+            last_typed_text = text_to_send
+            input_buffer += text_to_send
+            print(f"Success: Typed '{text_to_send}' on {platform.system()}")
+        
+        # Reset modifiers after typing
+        active_modifiers = {key: False for key in active_modifiers}
+        print("Modifiers reset")
     
-    active_modifiers = {key: False for key in active_modifiers}
-    print("Modifiers reset")
+    except Exception as e:
+        error_msg = f"Typing error: {str(e)}"
+        set_feedback_message(error_msg)
+        print(f"Typing error ({platform.system()}): {error_msg}\n{traceback.format_exc()}")
+        input_buffer += text
 
 def create_default_keyboard():
     keyboard = create_new_keyboard()
@@ -996,7 +981,7 @@ def update_loop():
             pygame.quit()
             return
         elif event.type == pygame.VIDEORESIZE:
-            screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
+            screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE | pygame.NOFRAME)
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_F11:
                 pygame.display.toggle_fullscreen()
@@ -1269,6 +1254,7 @@ def update_loop():
                                     swipe_direction = None
                                     last_typed_text = ""
                                     show_keyboard = True
+                                    restore_target_focus()  # Restore focus to target application
                                     clicked_button = True
                                     print(f"Selected keyboard: {selected_keyboard['name']}")
                             elif edit_collision_rect.collidepoint(mouse_pos):
@@ -1390,6 +1376,7 @@ def update_loop():
                         last_typed_text = ""
                         active_modifiers = {key: False for key in active_modifiers}
                         caps_lock_active = False
+                        restore_target_focus()  # Restore focus when exiting keyboard
                         print("Back to keyboard list")
                     else:
                         for key in selected_keyboard["keys"]:
@@ -1444,21 +1431,34 @@ def update_loop():
                     keyboard_area_start_y = 50
                     dragged_key["x"] = max(0, min(mouse_pos[0] - dragged_key["width"] // 2, screen.get_width() - 250 - dragged_key["width"]))
                     dragged_key["y"] = max(0, min(mouse_pos[1] - keyboard_area_start_y - dragged_key["height"] // 2, screen.get_height() - keyboard_area_start_y - dragged_key["height"]))
-                    print(f"Dragging key to x:{dragged_key['x']}, y:{dragged_key['y']}")
-                elif dragged_scroll and state in ["list", "help"]:
-                    dy = scroll_start_y - mouse_pos[1]
-                    scroll_offset = max(0, min(scroll_offset + dy, max_scroll))
+                elif dragged_scroll:
+                    delta_y = scroll_start_y - mouse_pos[1]
+                    scroll_offset = max(0, min(scroll_offset + delta_y, max_scroll))
                     scroll_start_y = mouse_pos[1]
-                    print(f"Scrolling: offset={scroll_offset}")
             except Exception as e:
                 set_feedback_message("Mouse motion error")
                 print(f"Mouse motion error: {e}\n{traceback.format_exc()}")
 
 async def main():
-    setup()
-    while True:
-        update_loop()
-        await asyncio.sleep(1.0 / 60)  # 60 FPS
+    setup()  # Initialize pygame and window settings
+    FPS = 60
+    try:
+        while True:
+            if state == "start":
+                draw_start_screen()
+            elif state == "help":
+                draw_help_screen()
+            elif state == "configure":
+                draw_configure_screen()
+            elif state == "list":
+                draw_keyboard_list()
+            elif state == "keyboard":
+                if show_keyboard:
+                    draw_keyboard()
+            update_loop()
+            await asyncio.sleep(1.0 / FPS)  # Control frame rate
+    except KeyboardInterrupt:
+        pygame.quit()
 
 if platform.system() == "Emscripten":
     asyncio.ensure_future(main())
