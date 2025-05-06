@@ -32,24 +32,6 @@ pip install -r requirements.txt
 ```bash
 python keyboard.py
 ```
-   ## Install in terminal
-
-      pip install pygame
-      pip install pyperclip
-      pip install pyautogui
-      pip install keyboard
-      pip install -r requirements.txt
-
-   ## Extensions on vscode
-
-      **Python (by Microsoft)**
-      **Pylance (by Microsoft)**
-      **Python Debugger (by Microsoft)**
-      **Jupyter (by Microsoft)**
-      **Code Runner (by Jun Han)**
-      **GitLens (by GitKraken)**
-      **Docker (by Microsoft)**
-
 2. Using the keyboard:
    - Click "Add Keyboard" to create a new keyboard layout
    - Use the configuration screen to customize key positions and actions
@@ -62,6 +44,27 @@ python keyboard.py
    - Use modifier keys (Shift, Ctrl, Alt)
    - Toggle CapsLock
    - Customize key actions for different swipe directions
+
+   
+## Install in terminal
+
+pip install pygame
+pip install pyperclip
+pip install pyautogui
+pip install keyboard
+pip install -r requirements.txt
+
+
+## Extensions on vscode
+
+1. **Python (by Microsoft)**
+2. **Pylance (by Microsoft)**
+3. **Python Debugger (by Microsoft)**
+4. **Jupyter (by Microsoft)**
+5. **Code Runner (by Jun Han)**
+6. **GitLens (by GitKraken)**
+7. **Docker (by Microsoft)**
+
 
 ## Customization
 
