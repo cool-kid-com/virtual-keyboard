@@ -1,4 +1,3 @@
-import pygame
 import asyncio
 import platform
 import math
@@ -7,23 +6,7 @@ import copy
 import time
 import traceback
 import json
-
-# Import ctypes for Windows API calls
-if platform.system() == "Windows":
-    import ctypes
-    from ctypes import wintypes
-    user32 = ctypes.windll.user32
-    WS_EX_NOACTIVATE = 0x08000000
-    WS_EX_TOPMOST = 0x00000008
-
-# Import for macOS window level (requires pyobjc)
-if platform.system() == "Darwin":
-    try:
-        from AppKit import NSWindow, NSFloatingWindowLevel, NSNonactivatingPanelMask
-        import objc
-    except ImportError:
-        print("Warning: pyobjc not installed. Always-on-top and non-activating may not work on macOS.")
-        objc = None
+import pygame
 
 try:
     import pyperclip
@@ -58,40 +41,9 @@ def setup():
     screen_height = info.current_h
     window_width = int(screen_width * 0.9)
     window_height = int(screen_height * 0.9)
-    window_x = (screen_width - window_width) // 2
-    window_y = (screen_height - window_height) // 2
     
-    # Use NOFRAME to avoid focus-taking borders; rely on RESIZABLE for basic window management
-    screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE | pygame.NOFRAME)
+    screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
     pygame.display.set_caption("Virtual Touchscreen Keyboard")
-    
-    hwnd = pygame.display.get_wm_info()['window']
-    if platform.system() == "Windows":
-        # Set window to be always on top and non-activating
-        user32.SetWindowPos(hwnd, -1, window_x, window_y, window_width, window_height, 0x0001 | 0x0002)
-        user32.SetWindowLongW(hwnd, -20, user32.GetWindowLongW(hwnd, -20) | WS_EX_NOACTIVATE | WS_EX_TOPMOST)
-    elif platform.system() == "Linux":
-        try:
-            import Xlib.display
-            display = Xlib.display.Display()
-            window = display.create_resource_object('window', hwnd)
-            atom = display.intern_atom('_NET_WM_STATE_ABOVE')
-            window.change_property(display.intern_atom('_NET_WM_STATE'), Xlib.Xatom.ATOM, 32, [atom])
-            # Set input hint to prevent focus
-            window.set_wm_hints(flags=Xlib.Xutil.InputHint, input=False)
-            window.configure(x=window_x, y=window_y, width=window_width, height=window_height)
-            display.sync()
-        except Exception as e:
-            print(f"Linux: Failed to set window position or non-activating: {e}")
-    elif platform.system() == "Darwin" and objc:
-        try:
-            ns_window = objc.objc_object(ptr=hwnd)
-            ns_window.setLevel_(NSFloatingWindowLevel)
-            ns_window.setStyleMask_(NSNonactivatingPanelMask)
-            ns_window.setFrameOrigin_((window_x, screen_height - window_y - window_height))
-            ns_window.setContentSize_((window_width, window_height))
-        except Exception as e:
-            print(f"macOS: Failed to set window position or non-activating: {e}")
     
     font = pygame.font.SysFont("arial", 14)
     small_font = pygame.font.SysFont("arial", 10)
@@ -137,16 +89,6 @@ def set_feedback_message(message, duration=2.0):
     feedback_message = message
     feedback_timer = time.time() + duration
     print(f"Feedback set: {message}")
-
-def restore_target_focus():
-    """Ensure the target application is focused before typing or showing keyboard."""
-    if pyautogui:
-        try:
-            print("Restoring focus to target application")
-            pyautogui.click()  # Simulate a click to focus the active window
-            time.sleep(0.1)  # Brief pause to ensure focus
-        except Exception as e:
-            print(f"Failed to restore focus: {e}")
 
 def copy_to_clipboard(text):
     try:
@@ -238,7 +180,6 @@ def send_key(text):
     
     print(f"send_key called with text: '{text}' on {platform.system()}")
     
-    # Handle CapsLock toggle
     if text == "CapsLock":
         caps_lock_active = not caps_lock_active
         set_feedback_message("Caps Lock " + ("On" if caps_lock_active else "Off"))
@@ -246,46 +187,50 @@ def send_key(text):
         active_modifiers = {key: False for key in active_modifiers}
         return
     
-    # Handle modifiers
     if text in ["Shift", "Ctrl", "Alt", "Tab", "Windows"]:
         active_modifiers[text] = True
         set_feedback_message(f"{text} pressed")
         print(f"Modifier {text} set to True")
         return
     
-    try:
-        if platform.system() == "Emscripten":
-            # Browser environment: Simulate key events via JavaScript
+    if platform.system() == "Emscripten":
+        try:
             key_map = {
                 "Enter": {"key": "Enter", "code": "Enter", "keyCode": 13},
                 "Backspace": {"key": "Backspace", "code": "Backspace", "keyCode": 8},
                 "Space": {"key": " ", "code": "Space", "keyCode": 32},
                 "Tab": {"key": "Tab", "code": "Tab", "keyCode": 9},
+                "Shift": {"key": "Shift", "code": "ShiftLeft", "keyCode": 16},
+                "Ctrl": {"key": "Control", "code": "ControlLeft", "keyCode": 17},
+                "Alt": {"key": "Alt", "code": "AltLeft", "keyCode": 18},
                 "Esc": {"key": "Escape", "code": "Escape", "keyCode": 27},
                 "Delete": {"key": "Delete", "code": "Delete", "keyCode": 46},
+                "CapsLock": {"key": "CapsLock", "code": "CapsLock", "keyCode": 20},
+                "Windows": {"key": "Meta", "code": "MetaLeft", "keyCode": 91},
                 "Up": {"key": "ArrowUp", "code": "ArrowUp", "keyCode": 38},
                 "Down": {"key": "ArrowDown", "code": "ArrowDown", "keyCode": 40},
                 "Left": {"key": "ArrowLeft", "code": "ArrowLeft", "keyCode": 37},
                 "Right": {"key": "ArrowRight", "code": "ArrowRight", "keyCode": 39}
             }
             
-            text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
-            props = key_map.get(text, {
-                "key": text_to_send,
-                "code": f"Key{text_to_send.upper()}" if len(text_to_send) == 1 else "",
-                "keyCode": ord(text_to_send.upper()) if len(text_to_send) == 1 else 0
-            })
+            if text in key_map:
+                props = key_map[text]
+            else:
+                text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
+                props = {
+                    "key": text_to_send,
+                    "code": f"Key{text_to_send.upper()}" if len(text_to_send) == 1 else "",
+                    "keyCode": ord(text_to_send.upper()) if len(text_to_send) == 1 else 0
+                }
+            
             props["shiftKey"] = active_modifiers["Shift"]
             props["ctrlKey"] = active_modifiers["Ctrl"]
             props["altKey"] = active_modifiers["Alt"]
             
-            # Ensure browser focus is on the target input field
-            restore_target_focus()
-            
             js_code = f'''
             let el = document.activeElement;
             if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && !el.isContentEditable)) {{
-                el = document.querySelector("input, textarea, [contenteditable]") || document.body;
+                el = document.querySelector("input, textarea, [contenteditable]") || document.activeElement;
                 if (el) el.focus();
             }}
             if (el) {{
@@ -302,46 +247,47 @@ def send_key(text):
                 ["keydown", "keypress", "keyup"].forEach(eventType => {{
                     el.dispatchEvent(new KeyboardEvent(eventType, eventProps));
                 }});
-                if ("{text}" === "Backspace") {{
-                    let start = el.selectionStart;
-                    if (start > 0) {{
-                        el.value = el.value.substring(0, start - 1) + el.value.substring(start);
-                        el.selectionStart = el.selectionEnd = start - 1;
+                if (!"{text}".match(/^(Shift|Ctrl|Alt|Tab|Windows|CapsLock)$/)) {{
+                    let value = "{text}" === "Space" ? " " :
+                                "{text}" === "Enter" ? "\\n" :
+                                "{text}" === "Tab" ? "\\t" :
+                                "{text}" === "Backspace" ? "" :
+                                "{text}" === "Delete" ? "" :
+                                "{props['key']}";
+                    if ("{text}" === "Backspace") {{
+                        let start = el.selectionStart;
+                        if (start > 0) {{
+                            el.value = el.value.substring(0, start - 1) + el.value.substring(start);
+                            el.selectionStart = el.selectionEnd = start - 1;
+                        }}
+                    }} else if ("{text}" === "Delete") {{
+                        el.value = "";
+                    }} else if (value) {{
+                        let start = el.selectionStart;
+                        el.value = el.value.substring(0, start) + value + el.value.substring(el.selectionEnd);
+                        el.selectionStart = el.selectionEnd = start + value.length;
                     }}
-                }} else if ("{text}" === "Delete") {{
-                    let start = el.selectionStart;
-                    el.value = el.value.substring(0, start) + el.value.substring(start + 1);
-                    el.selectionStart = el.selectionEnd = start;
-                }} else if ("{text}" === "Space") {{
-                    let start = el.selectionStart;
-                    el.value = el.value.substring(0, start) + " " + el.value.substring(start);
-                    el.selectionStart = el.selectionEnd = start + 1;
-                }} else if ("{text}" === "Enter") {{
-                    let start = el.selectionStart;
-                    el.value = el.value.substring(0, start) + "\\n" + el.value.substring(start);
-                    el.selectionStart = el.selectionEnd = start + 1;
-                }} else if ("{text}" !== "Shift" && "{text}" !== "Ctrl" && "{text}" !== "Alt" && "{text}" !== "Tab" && "{text}" !== "Windows") {{
-                    let start = el.selectionStart;
-                    el.value = el.value.substring(0, start) + "{props['key']}" + el.value.substring(start);
-                    el.selectionStart = el.selectionEnd = start + "{props['key']}".length;
                 }}
             }} else {{
                 console.error("No focusable element found");
             }}
             '''
             js.eval(js_code)
-            set_feedback_message(f"Typed: {text_to_send}")
-            last_typed_text = text_to_send
-            print(f"Emscripten: Typed '{text_to_send}' to browser")
-        else:
-            # Desktop environment: Use pyautogui or keyboard
-            if pyautogui is None and keyboard is None:
-                set_feedback_message("Typing failed: Install pyautogui or keyboard")
-                print("No typing method available")
-                return
-            
-            # Ensure target is focused
-            restore_target_focus()
+            set_feedback_message(f"Typed: {text}")
+            last_typed_text = text
+            print(f"Emscripten: Typed '{text}' to browser")
+        except Exception as e:
+            set_feedback_message(f"Typing error: {str(e)}")
+            print(f"Key send error (Emscripten): {e}\n{traceback.format_exc()}")
+    else:
+        try:
+            print(f"Attempting to type '{text}' on {platform.system()}")
+            if pyautogui is not None:
+                print("Ensuring target window focus")
+                pyautogui.click()
+                time.sleep(0.1)
+            else:
+                print("Warning: pyautogui not available for focus")
             
             key_map = {
                 "Backspace": "backspace",
@@ -354,47 +300,61 @@ def send_key(text):
                 "Down": "down",
                 "Left": "left",
                 "Right": "right",
-                "Windows": "win"
+                "Windows": "win",
+                "CapsLock": "capslock"
             }
             
-            text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
-            if pyautogui:
-                print(f"Using pyautogui to type '{text_to_send}'")
-                if text in key_map:
+            if pyautogui is not None:
+                print("Using pyautogui for typing")
+                if text in key_map and key_map[text]:
                     pyautogui.press(key_map[text])
-                    print(f"Pressed special key: {key_map[text]}")
-                elif active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
-                    pyautogui.hotkey("ctrl", text.lower())
-                    print(f"Hotkey: ctrl+{text.lower()}")
+                    print(f"Pressed '{key_map[text]}'")
+                elif text in ["Shift", "Ctrl", "Alt", "Tab", "Windows"]:
+                    print(f"Skipping modifier '{text}'")
+                    return
                 else:
-                    pyautogui.write(text_to_send, interval=0.05)
-                    print(f"Typed: {text_to_send}")
-            elif keyboard:
-                print(f"Using keyboard library to type '{text_to_send}'")
-                if text in key_map:
+                    text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
+                    if active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
+                        pyautogui.hotkey("ctrl", text.lower())
+                        print(f"Hotkey 'ctrl+{text.lower()}'")
+                    else:
+                        pyautogui.write(text_to_send, interval=0.05)
+                        print(f"Typed '{text_to_send}'")
+                set_feedback_message(f"Typed: {text}")
+                last_typed_text = text
+            elif keyboard is not None:
+                print("Falling back to keyboard library")
+                if text in key_map and key_map[text]:
                     keyboard.press_and_release(key_map[text])
-                    print(f"Pressed special key: {key_map[text]}")
-                elif active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
-                    keyboard.press_and_release(f"ctrl+{text.lower()}")
-                    print(f"Hotkey: ctrl+{text.lower()}")
+                    print(f"Pressed '{key_map[text]}'")
+                elif text in ["Shift", "Ctrl", "Alt", "Tab", "Windows"]:
+                    print(f"Skipping modifier '{text}'")
+                    return
                 else:
-                    keyboard.write(text_to_send)
-                    print(f"Typed: {text_to_send}")
+                    text_to_send = text.upper() if active_modifiers["Shift"] or caps_lock_active else text
+                    if active_modifiers["Ctrl"] and text.lower() in ["c", "v", "x", "a", "z"]:
+                        keyboard.press_and_release(f"ctrl+{text.lower()}")
+                        print(f"Hotkey 'ctrl+{text.lower()}'")
+                    else:
+                        keyboard.write(text_to_send)
+                        print(f"Typed '{text_to_send}'")
+                set_feedback_message(f"Typed: {text}")
+                last_typed_text = text
+            else:
+                print("No typing method available")
+                set_feedback_message("Typing failed: Install pyautogui or keyboard")
+                return
             
-            set_feedback_message(f"Typed: {text_to_send}")
-            last_typed_text = text_to_send
-            input_buffer += text_to_send
-            print(f"Success: Typed '{text_to_send}' on {platform.system()}")
-        
-        # Reset modifiers after typing
-        active_modifiers = {key: False for key in active_modifiers}
-        print("Modifiers reset")
+            input_buffer += text
+            print(f"Success: Typed '{text}' on {platform.system()}")
+        except Exception as e:
+            error_msg = f"Typing error: {str(e)}"
+            set_feedback_message(error_msg)
+            print(f"Key send error ({platform.system()}): {error_msg}\n{traceback.format_exc()}")
+            input_buffer += text
     
-    except Exception as e:
-        error_msg = f"Typing error: {str(e)}"
-        set_feedback_message(error_msg)
-        print(f"Typing error ({platform.system()}): {error_msg}\n{traceback.format_exc()}")
-        input_buffer += text
+    active_modifiers = {key: False for key in active_modifiers}
+    print("Modifiers reset")
 
 def create_default_keyboard():
     keyboard = create_new_keyboard()
@@ -408,6 +368,8 @@ def create_new_keyboard():
 
 def create_new_key(last_key=None):
     actions = {direction: "" for direction in DIRECTIONS}
+    if last_key:
+        return copy.deepcopy(last_key)
     return {"char": "", "x": 40, "y": 40, "width": 40, "height": 40, "actions": actions}
 
 def draw_start_screen():
@@ -481,6 +443,7 @@ def draw_help_screen():
         "- Click 'Add Keyboard' to enter the configuration screen.",
         "- Name your keyboard by clicking the name field and typing.",
         "- Click 'Add Key' to create a new key (starts blank).",
+        "- Click 'Duplicate Key' to copy the selected key.",
         "- Drag keys to position them on the left side of the screen.",
         "- Select a key to configure it on the right panel.",
         "",
@@ -503,6 +466,7 @@ def draw_help_screen():
         "- 'Select': Use a keyboard for typing.",
         "- 'Edit': Modify a keyboard's layout.",
         "- 'Delete': Remove a keyboard.",
+        "- 'Duplicate': Create a copy of the keyboard.",
         "- 'Add Keyboard', 'Save', 'Load', 'Delete All Code': Same as start screen.",
         "- Scroll by dragging if there are many keyboards.",
         "",
@@ -540,7 +504,7 @@ def draw_help_screen():
         "- JSON errors: Check for valid format (must have 'name' and 'keys').",
         "- Errors: Check the console for details; ensure all libraries are installed.",
         "",
-        "Need extra help or have ideas? Contact 2424lplp@gmail.com. May take a while to respond, be patient."
+        "For additional support or to share feedback, please email 2424lplp@gmail.com. Response times may vary, so we appreciate your patience."
     ]
     
     total_height = len(help_text) * line_height
@@ -701,7 +665,7 @@ def draw_configure_screen():
             pygame.draw.polygon(screen, down_color, [(down_arrow_rect.x, down_arrow_rect.top), (down_arrow_rect.centerx, down_arrow_rect.bottom), (down_arrow_rect.right, down_arrow_rect.top)])
             input_rects[f"{direction}_up_arrow"] = up_arrow_rect
             input_rects[f"{direction}_down_arrow"] = down_arrow_rect
-        
+    
         dimension_y = config_panel_y + len(DIRECTIONS) * 25 + 10
         
         width_rect = pygame.Rect(config_panel_x + 100, dimension_y, 120, 20)
@@ -734,14 +698,21 @@ def draw_configure_screen():
     text_rect = text.get_rect(center=add_key_button.center)
     screen.blit(text, text_rect)
     
-    done_button = pygame.Rect(150, 365, 100, 20)
+    duplicate_key_button = pygame.Rect(150, 365, 100, 20)
+    pygame.draw.rect(screen, (100, 100, 255), duplicate_key_button)
+    pygame.draw.rect(screen, (0, 0, 0), duplicate_key_button, 1)
+    text = font.render("Duplicate Key", True, (0, 0, 0))
+    text_rect = text.get_rect(center=duplicate_key_button.center)
+    screen.blit(text, text_rect)
+    
+    done_button = pygame.Rect(270, 365, 100, 20)
     pygame.draw.rect(screen, (255, 100, 100), done_button)
     pygame.draw.rect(screen, (0, 0, 0), done_button, 1)
     text = font.render("Done", True, (0, 0, 0))
     text_rect = text.get_rect(center=done_button.center)
     screen.blit(text, text_rect)
     
-    delete_key_button = pygame.Rect(270, 365, 100, 20)
+    delete_key_button = pygame.Rect(390, 365, 100, 20)
     pygame.draw.rect(screen, (255, 50, 50), delete_key_button)
     pygame.draw.rect(screen, (0, 0, 0), delete_key_button, 1)
     text = font.render("Delete Key", True, (0, 0, 0))
@@ -749,7 +720,7 @@ def draw_configure_screen():
     screen.blit(text, text_rect)
     
     pygame.display.flip()
-    return add_key_button, done_button, delete_key_button, input_rects
+    return add_key_button, done_button, delete_key_button, input_rects, duplicate_key_button
 
 def draw_keyboard_list():
     global scroll_offset, max_scroll
@@ -766,7 +737,7 @@ def draw_keyboard_list():
         y = 40 + i * item_height - scroll_offset
         if y < -40 or y > canvas_height:
             continue
-        select_button = pygame.Rect(40, y, 220, 40)
+        select_button = pygame.Rect(40, y, 160, 40)
         color = (100, 100, 255) if select_button.collidepoint(mouse_pos) else (200, 200, 200)
         pygame.draw.rect(screen, color, select_button)
         outline_color = (0, 0, 0)
@@ -775,7 +746,7 @@ def draw_keyboard_list():
         text_rect = text.get_rect(center=select_button.center)
         screen.blit(text, text_rect)
         
-        edit_button = pygame.Rect(260, y, 60, 40)
+        edit_button = pygame.Rect(210, y, 60, 40)
         color = (100, 100, 255) if edit_button.collidepoint(mouse_pos) else (200, 200, 200)
         pygame.draw.rect(screen, color, edit_button)
         pygame.draw.rect(screen, outline_color, edit_button, 2)
@@ -783,7 +754,7 @@ def draw_keyboard_list():
         text_rect = text.get_rect(center=edit_button.center)
         screen.blit(text, text_rect)
         
-        delete_button = pygame.Rect(330, y, 80, 40)
+        delete_button = pygame.Rect(280, y, 80, 40)
         color = (100, 100, 255) if delete_button.collidepoint(mouse_pos) else (200, 200, 200)
         pygame.draw.rect(screen, color, delete_button)
         pygame.draw.rect(screen, outline_color, delete_button, 2)
@@ -791,7 +762,15 @@ def draw_keyboard_list():
         text_rect = text.get_rect(center=delete_button.center)
         screen.blit(text, text_rect)
         
-        keyboard_buttons.append((select_button, edit_button, delete_button, i))
+        duplicate_button = pygame.Rect(370, y, 80, 40)
+        color = (100, 100, 255) if duplicate_button.collidepoint(mouse_pos) else (200, 200, 200)
+        pygame.draw.rect(screen, color, duplicate_button)
+        pygame.draw.rect(screen, outline_color, duplicate_button, 2)
+        text = font.render("Duplicate", True, (0, 0, 0))
+        text_rect = text.get_rect(center=duplicate_button.center)
+        screen.blit(text, text_rect)
+        
+        keyboard_buttons.append((select_button, edit_button, delete_button, i, duplicate_button))
     
     load_input_rect = pygame.Rect(40, 300, 410, 40)
     color = (100, 100, 255) if active_input == "load_code" else (200, 200, 200)
@@ -974,14 +953,14 @@ def get_swipe_direction(start_pos, end_pos):
         return "Right"
 
 def update_loop():
-    global state, selected_key, swipe_start, swipe_direction, selected_keyboard, current_keys, dragged_key, configuring_key, label_text, text_active, active_input, action_texts, scroll_offset, dragged_scroll, keyboard_name_text, last_typed_text, input_buffer, show_keyboard, last_arrow_click, scroll_start_y, keyboards, load_code_text, screen, feedback_message, feedback_timer, last_key_action_time
+    global state, selected_key, swipe_start, swipe_direction, selected_keyboard, current_keys, dragged_key, configuring_key, label_text, text_active, active_input, action_texts, scroll_offset, dragged_scroll, keyboard_name_text, last_typed_text, input_buffer, show_keyboard, last_arrow_click, scroll_start_y, keyboards, load_code_text, screen, feedback_message, feedback_timer, last_key_action_time, active_modifiers, caps_lock_active
     
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
             return
         elif event.type == pygame.VIDEORESIZE:
-            screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE | pygame.NOFRAME)
+            screen = pygame.display.set_mode((event.w, event.h), pygame.RESIZABLE)
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_F11:
                 pygame.display.toggle_fullscreen()
@@ -1140,7 +1119,7 @@ def update_loop():
                         scroll_start_y = mouse_pos[1]
                 
                 elif state == "configure" and selected_keyboard:
-                    add_key_button, done_button, delete_key_button, input_rects = draw_configure_screen()
+                    add_key_button, done_button, delete_key_button, input_rects, duplicate_key_button = draw_configure_screen()
                     if add_key_button.collidepoint(mouse_pos):
                         new_key = create_new_key()
                         current_keys.append(new_key)
@@ -1151,6 +1130,19 @@ def update_loop():
                         active_input = None
                         dragged_key = None
                         print("Added new blank key")
+                    elif duplicate_key_button.collidepoint(mouse_pos):
+                        if configuring_key:
+                            new_key = create_new_key(configuring_key)
+                            new_key["x"] += 10
+                            new_key["y"] += 10
+                            current_keys.append(new_key)
+                            configuring_key = new_key
+                            label_text = ""
+                            action_texts = {direction: configuring_key["actions"][direction] for direction in DIRECTIONS}
+                            text_active = False
+                            active_input = None
+                            dragged_key = None
+                            print("Duplicated selected key")
                     elif done_button.collidepoint(mouse_pos):
                         selected_keyboard["keys"] = current_keys
                         selected_keyboard["name"] = keyboard_name_text
@@ -1237,12 +1229,14 @@ def update_loop():
                 elif state == "list":
                     add_button_rect, save_button_rect, load_button_rect, load_input_rect, keyboard_buttons, scrollbar_rect, delete_code_button_rect = draw_keyboard_list()
                     delete_indices = []
+                    duplicate_indices = []
                     
                     clicked_button = False
-                    for select_button, edit_button, delete_button, idx in keyboard_buttons:
+                    for select_button, edit_button, delete_button, idx, duplicate_button in keyboard_buttons:
                         select_collision_rect = pygame.Rect(select_button.x, select_button.y + scroll_offset, select_button.width, select_button.height)
                         edit_collision_rect = pygame.Rect(edit_button.x, edit_button.y + scroll_offset, edit_button.width, edit_button.height)
                         delete_collision_rect = pygame.Rect(delete_button.x, delete_button.y + scroll_offset, delete_button.width, delete_button.height)
+                        duplicate_collision_rect = pygame.Rect(duplicate_button.x, duplicate_button.y + scroll_offset, duplicate_button.width, duplicate_button.height)
                         
                         try:
                             if select_collision_rect.collidepoint(mouse_pos):
@@ -1254,7 +1248,6 @@ def update_loop():
                                     swipe_direction = None
                                     last_typed_text = ""
                                     show_keyboard = True
-                                    restore_target_focus()  # Restore focus to target application
                                     clicked_button = True
                                     print(f"Selected keyboard: {selected_keyboard['name']}")
                             elif edit_collision_rect.collidepoint(mouse_pos):
@@ -1273,6 +1266,11 @@ def update_loop():
                                     delete_indices.append(idx)
                                     clicked_button = True
                                     print(f"Deleted keyboard at index {idx}")
+                            elif duplicate_collision_rect.collidepoint(mouse_pos):
+                                if idx < len(keyboards):
+                                    duplicate_indices.append(idx)
+                                    clicked_button = True
+                                    print(f"Duplicating keyboard at index {idx}")
                         except IndexError:
                             continue
                     
@@ -1284,6 +1282,18 @@ def update_loop():
                         except IndexError:
                             continue
                     
+                    for idx in sorted(duplicate_indices, reverse=True):
+                        try:
+                            if idx < len(keyboards):
+                                new_keyboard = copy.deepcopy(keyboards[idx])
+                                new_keyboard["id"] = str(uuid.uuid4())
+                                new_keyboard["name"] = new_keyboard["name"] + " Copy"
+                                keyboards.append(new_keyboard)
+                                set_feedback_message("Keyboard duplicated")
+                                print(f"Duplicated keyboard: {new_keyboard['name']}")
+                        except IndexError:
+                            continue
+                    
                     if add_button_rect.collidepoint(mouse_pos):
                         selected_keyboard = create_default_keyboard()
                         current_keys = selected_keyboard["keys"]
@@ -1292,8 +1302,8 @@ def update_loop():
                         keyboard_name_text = selected_keyboard["name"]
                         action_texts = {direction: configuring_key["actions"][direction] for direction in DIRECTIONS} if configuring_key else {}
                         state = "configure"
-                        clicked_button = True
-                        print("Add Keyboard button clicked")
+                        set_feedback_message("New keyboard created")
+                        print("Add Keyboard button clicked (list)")
                     elif save_button_rect.collidepoint(mouse_pos):
                         print("Save button clicked (list)")
                         try:
@@ -1314,7 +1324,6 @@ def update_loop():
                         except Exception as e:
                             set_feedback_message("Save error")
                             print(f"Save error: {e}\n{traceback.format_exc()}")
-                        clicked_button = True
                     elif load_button_rect.collidepoint(mouse_pos):
                         print("Load button clicked (list)")
                         try:
@@ -1332,7 +1341,6 @@ def update_loop():
                                 else:
                                     new_keyboard["id"] = str(uuid.uuid4())
                                     keyboards.append(new_keyboard)
-                                    scroll_offset = 0
                                     set_feedback_message("Keyboard loaded")
                                     print("Keyboard loaded from JSON")
                             else:
@@ -1344,14 +1352,12 @@ def update_loop():
                         except Exception as e:
                             set_feedback_message("Load error")
                             print(f"Load error: {e}\n{traceback.format_exc()}")
-                        clicked_button = True
                     elif load_input_rect.collidepoint(mouse_pos):
                         text_active = True
                         active_input = "load_code"
                         label_text = load_code_text or ""
                         set_feedback_message("Paste box activated")
                         print("Paste JSON input activated (list)")
-                        clicked_button = True
                     elif delete_code_button_rect.collidepoint(mouse_pos):
                         load_code_text = ""
                         label_text = ""
@@ -1359,7 +1365,6 @@ def update_loop():
                         active_input = None
                         set_feedback_message("Paste input cleared")
                         print("Delete All Code button clicked (list)")
-                        clicked_button = True
                     elif not clicked_button:
                         dragged_scroll = True
                         scroll_start_y = mouse_pos[1]
@@ -1368,15 +1373,14 @@ def update_loop():
                     back_button_rect = draw_keyboard()
                     if back_button_rect.collidepoint(mouse_pos):
                         state = "list"
-                        selected_keyboard = None
                         selected_key = None
                         swipe_start = None
                         swipe_direction = None
-                        input_buffer = ""
                         last_typed_text = ""
+                        input_buffer = ""
+                        show_keyboard = False
                         active_modifiers = {key: False for key in active_modifiers}
                         caps_lock_active = False
-                        restore_target_focus()  # Restore focus when exiting keyboard
                         print("Back to keyboard list")
                     else:
                         for key in selected_keyboard["keys"]:
@@ -1385,83 +1389,83 @@ def update_loop():
                                 selected_key = key
                                 swipe_start = mouse_pos
                                 swipe_direction = None
-                                print(f"Selected key for swipe: {key['char']}")
+                                print(f"Started swipe on key: {key['char']}")
                                 break
             except Exception as e:
                 set_feedback_message("Mouse down error")
                 print(f"Mouse down error: {e}\n{traceback.format_exc()}")
         
         elif event.type == pygame.MOUSEBUTTONUP:
+            mouse_pos = event.pos
             try:
                 if state == "keyboard" and selected_key and swipe_start:
-                    mouse_pos = event.pos
-                    current_time = time.time()
-                    if current_time - last_key_action_time < 0.2:
-                        print("Key action ignored: Within cooldown")
-                        selected_key = None
-                        swipe_start = None
-                        swipe_direction = None
-                        continue
                     swipe_direction = get_swipe_direction(swipe_start, mouse_pos)
-                    dx = mouse_pos[0] - swipe_start[0]
-                    dy = mouse_pos[1] - swipe_start[1]
-                    distance = math.sqrt(dx**2 + dy**2)
+                    distance = math.hypot(mouse_pos[0] - swipe_start[0], mouse_pos[1] - swipe_start[1])
                     if distance < 10:
                         swipe_direction = "Tap"
-                    action_text = selected_key["actions"].get(swipe_direction, "")
-                    if action_text:
-                        send_key(action_text)
-                        last_key_action_time = current_time
-                        print(f"Performed {swipe_direction} action: '{action_text}'")
-                    else:
-                        print(f"No action defined for {swipe_direction}")
+                    action = selected_key["actions"].get(swipe_direction)
+                    if action and time.time() - last_key_action_time > 0.2:
+                        last_key_action_time = time.time()
+                        send_key(action)
+                        print(f"Performed {swipe_direction} action: '{action}'")
                     selected_key = None
                     swipe_start = None
                     swipe_direction = None
                 dragged_key = None
                 dragged_scroll = False
+                print("Mouse button released, stopped dragging")
             except Exception as e:
                 set_feedback_message("Mouse up error")
                 print(f"Mouse up error: {e}\n{traceback.format_exc()}")
         
         elif event.type == pygame.MOUSEMOTION:
+            mouse_pos = event.pos
             try:
-                mouse_pos = event.pos
-                if dragged_key and state == "configure":
-                    keyboard_area_start_y = 50
-                    dragged_key["x"] = max(0, min(mouse_pos[0] - dragged_key["width"] // 2, screen.get_width() - 250 - dragged_key["width"]))
-                    dragged_key["y"] = max(0, min(mouse_pos[1] - keyboard_area_start_y - dragged_key["height"] // 2, screen.get_height() - keyboard_area_start_y - dragged_key["height"]))
-                elif dragged_scroll:
-                    delta_y = scroll_start_y - mouse_pos[1]
-                    scroll_offset = max(0, min(scroll_offset + delta_y, max_scroll))
+                if state == "configure" and dragged_key:
+                    dragged_key["x"] = max(0, min(mouse_pos[0] - dragged_key["width"] // 2, screen.get_width() - dragged_key["width"]))
+                    dragged_key["y"] = max(0, min(mouse_pos[1] - dragged_key["height"] // 2 - 50, screen.get_height() - dragged_key["height"] - 50))
+                    print(f"Dragging key to ({dragged_key['x']}, {dragged_key['y']})")
+                elif dragged_scroll and state in ["list", "help"]:
+                    scroll_offset += scroll_start_y - mouse_pos[1]
                     scroll_start_y = mouse_pos[1]
+                    print(f"Scrolling, offset: {scroll_offset}")
             except Exception as e:
                 set_feedback_message("Mouse motion error")
                 print(f"Mouse motion error: {e}\n{traceback.format_exc()}")
 
-async def main():
-    setup()  # Initialize pygame and window settings
-    FPS = 60
     try:
-        while True:
-            if state == "start":
-                draw_start_screen()
-            elif state == "help":
-                draw_help_screen()
-            elif state == "configure":
-                draw_configure_screen()
-            elif state == "list":
-                draw_keyboard_list()
-            elif state == "keyboard":
-                if show_keyboard:
-                    draw_keyboard()
-            update_loop()
-            await asyncio.sleep(1.0 / FPS)  # Control frame rate
-    except KeyboardInterrupt:
-        pygame.quit()
+        if state == "start":
+            draw_start_screen()
+        elif state == "help":
+            draw_help_screen()
+        elif state == "configure":
+            draw_configure_screen()
+        elif state == "list":
+            draw_keyboard_list()
+        elif state == "keyboard":
+            draw_keyboard()
+    except Exception as e:
+        set_feedback_message("Draw error")
+        print(f"Draw error: {e}\n{traceback.format_exc()}")
 
-if platform.system() == "Emscripten":
-    asyncio.ensure_future(main())
-else:
-    if __name__ == "__main__":
-        asyncio.run(main())
+def main():
+    setup()
+    running = True
+    clock = pygame.time.Clock()
+    
+    while running:
+        try:
+            update_loop()
+            clock.tick(60)
+        except Exception as e:
+            set_feedback_message(f"Main loop error: {str(e)}")
+            print(f"Main loop error: {e}\n{traceback.format_exc()}")
+            running = False
+    
+    pygame.quit()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        print(f"Fatal error: {e}\n{traceback.format_exc()}")
