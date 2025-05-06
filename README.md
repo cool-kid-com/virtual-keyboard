@@ -34,11 +34,11 @@ python keyboard.py
 ```
    ## Install in terminal
 
-   pip install pygame
-   pip install pyperclip
-   pip install pyautogui
-   pip install keyboard
-   pip install -r requirements.txt
+      pip install pygame
+      pip install pyperclip
+      pip install pyautogui
+      pip install keyboard
+      pip install -r requirements.txt
 
    ## Extensions on vscode
 
