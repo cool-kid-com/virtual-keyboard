@@ -32,7 +32,7 @@ pip install -r requirements.txt
 ```bash
 python keyboard.py
 ```
-   ##Install in terminal
+   ## Install in terminal
 
    pip install pygame
    pip install pyperclip
@@ -40,7 +40,7 @@ python keyboard.py
    pip install keyboard
    pip install -r requirements.txt
 
-   ##Extensions on vscode
+   ## Extensions on vscode
 
    1. **Python (by Microsoft)**
    2. **Pylance (by Microsoft)**
