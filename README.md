@@ -13,7 +13,7 @@ A customizable virtual keyboard application built with Python and Pygame. This a
 
 ## Installation
 
-1. Make sure you have Python 3.7 or higher installed on your system.
+1. Make sure you have Python 3.11 or higher installed on your system.
 
 2. Clone this repository or download the source code:
 ```bash
@@ -32,6 +32,23 @@ pip install -r requirements.txt
 ```bash
 python keyboard.py
 ```
+   ##Install in terminal
+
+   pip install pygame
+   pip install pyperclip
+   pip install pyautogui
+   pip install keyboard
+   pip install -r requirements.txt
+
+   ##Extensions on vscode
+
+   1. **Python (by Microsoft)**
+   2. **Pylance (by Microsoft)**
+   3. **Python Debugger (by Microsoft)**
+   4. **Jupyter (by Microsoft)**
+   5. **Code Runner (by Jun Han)**
+   6. **GitLens (by GitKraken)**
+   7. **Docker (by Microsoft)**
 
 2. Using the keyboard:
    - Click "Add Keyboard" to create a new keyboard layout
