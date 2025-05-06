@@ -48,11 +48,11 @@ python keyboard.py
    
 ## Install in terminal
 
-pip install pygame
-pip install pyperclip
-pip install pyautogui
-pip install keyboard
-pip install -r requirements.txt
+1. pip install pygame
+2. pip install pyperclip
+3. pip install pyautogui
+4. pip install keyboard
+5. pip install -r requirements.txt
 
 
 ## Extensions on vscode
